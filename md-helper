@@ -1,0 +1,243 @@
+#!/bin/bash
+
+checkDependencies() {
+    dependencies=("dialog" "lsusb" "udevadm" "usbreset")
+
+    for dep in "${dependencies[@]}"; do
+        if [ ! "$(command -v "$dep")" ]; then
+            fatal "[ERROR] Command $dep not installed."
+        fi
+    done
+
+    if [ $EUID != 0 ]; then
+        fatal "[ERROR] Sudo privileges required."
+    fi
+}
+
+fatal() {
+    echo "$@" >&2
+    kill -10 $proc
+}
+
+getJournalID() {
+    #lsusb -tvv | grep -A 1 $(udevadm info -q property -n /dev/sda | grep -E "ID_VENDOR_ID|ID_MODEL_ID" | sort -r | cut -d "=" -f2 | paste -sd ":" -) \
+    #    | grep /sys/bus | cut -d "/" -f 6 | tr -d '[:blank:]'
+    lsusb -tvv | grep -A 1 $(udevadm info -q property -n /dev/sda | grep -E "ID_VENDOR_ID|ID_MODEL_ID" | sort -r | cut -d "=" -f2 | paste -sd ":" -) \
+        | awk -F " " '{print $2}' | head -1
+}
+
+getMessage() {
+    if [ "$2" == "true" ]; then
+        destination=$(grep "To:" <<< "$1" | cut -d " " -f 2)
+        subject=$(grep "Subject:" <<< "$1" | cut -d " " -f 2)
+        body=$(sed -e '1,/^$/d' <<< "$1")
+        body="${body//$'mdadm\nrunning'/mdadm running}"
+    else
+        subject="$1"
+
+        sleep 1
+
+        if [[ "$subject" == *"/dev/md"* ]]; then
+            destination=$(grep "MAILADDR" /etc/mdadm/mdadm.conf | cut -d " " -f 2)
+            body=$(cat /proc/mdstat)
+        fi
+    fi
+
+    if [[ "$subject" == *"NewArray"* ]]; then
+        priority="low"
+    elif [[ "$subject" == *"Fail"* ]]; then
+        priority="high"
+    else
+        priority="default"
+    fi
+
+    notify "$priority" "$subject" "$body" "$destination"
+}
+
+openIntegrity() {
+    echo "[INFO] Opening integrity..."
+    integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:0 isda \
+        && echo "[INFO] /dev/isda is up." || echo "[ERROR] /dev/isda is already up or something went wrong."
+    integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:1 isdb \
+        && echo "[INFO] /dev/isdb is up." || echo "[ERROR] /dev/isdb is already up or something went wrong."
+    integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:2 isdc \
+        && echo "[INFO] /dev/isdc is up." || echo "[ERROR] /dev/isdc is already up or something went wrong."
+    integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:3 isdd \
+        && echo "[INFO] /dev/isdd is up." || echo "[ERROR] /dev/isdd is already up or something went wrong."
+}
+
+mdAssemble() {
+    echo "[INFO] Assembling array /dev/md0..."
+    mdadm --assemble /dev/md0 --uuid=7ccf7a73:8be7e9a2:e7b87761:52f55e50 \
+        && mdadm --misc -D /dev/md0 || echo "[ERROR] Something went wrong with /dev/md0."
+    echo
+ }
+
+mdAssembleReadOnly() {
+    echo "[INFO] Assembling array /dev/md0 as read-only..."
+    mdadm --assemble --readonly /dev/md0 --uuid=7ccf7a73:8be7e9a2:e7b87761:52f55e50 \
+        && mdadm --misc -D /dev/md0 || echo "[ERROR] Something went wrong with /dev/md0."
+    echo
+ }
+
+openLUKS() {
+    echo "[INFO] Decrypting /dev/md0..."
+    cryptsetup luksOpen /dev/md0 lmd0 \
+        && echo "[INFO] /dev/lmd0 is up." || echo "[ERROR] Something went wrong with /dev/lmd0."
+    echo
+}
+
+mountFilesystems(){
+    echo "[INFO] Mounting filesystems..."
+    sleep 1
+    mount -a \
+        && df -h /apollo /ldap || echo "[ERROR] Something went wrong with /etc/fstab."
+    echo
+}
+
+startContainers(){
+    echo "[INFO] Starting containers..."
+    docker start radarr sonarr prowlarr bazarr qbittorrent jellyfin
+    echo
+}
+
+mdCheckPause() {
+    mdadm --misc --action=idle /dev/md0
+}
+
+mdCheckStart() {
+    mdadm --misc --action=check /dev/md0
+}
+
+mdCheckStop() {
+    mdadm --misc --action=idle /dev/md0
+    echo 0 > /sys/block/md0/md/sync_min
+}
+
+mdJournalFix() {
+    journalID=$(getJournalID)
+
+    # echo "[INFO] Unbinding journal USB interface..."
+    # echo "$journalBUS" | tee /sys/bus/usb/drivers/usb/unbind
+    # echo "[INFO] Sleeping for 5 seconds. Close all processes on /dev/md0."
+    # sleep 5
+    # echo "[INFO] Binding journal USB interface..."
+    # echo "$journalBUS" | tee /sys/bus/usb/drivers/usb/bind 
+
+    usbreset $journalID
+
+    openIntegrity
+    mdAssembleReadOnly
+
+    echo "[INFO] Re-adding journal to array..."
+    mdadm --manage /dev/md0 --add-journal /dev/sda 
+
+    openLUKS
+    mountFilesystems
+    startContainers
+}
+
+mdPerformance() {
+    disks=$(lsblk | grep -B 1 "isd" | grep "disk" | cut -c 1-3)
+
+    for i in $disks; do
+        echo "[INFO] Setting read-ahead to 16MiB for disk $i..."I
+        blockdev --setra 16384 /dev/"$i"
+    
+        echo "[INFO] Setting read_ahead_kb to 1024 for disk $i..."
+        echo 1024 > /sys/block/"$i"/queue/read_ahead_kb
+ 
+        echo "[INFO] Setting nr_requests to 256 for disk $i..."
+        echo 256 > /sys/block/"$i"/queue/nr_requests
+    
+        echo "[INFO] Disabling NCQ for disk $i..."
+        echo 1 > /sys/block/"$i"/device/queue_depth
+
+        echo
+    done
+
+    echo "[INFO] Setting read-ahead to 64 MiB for /dev/md0..."
+    blockdev --setra 65536 /dev/md0
+
+    echo
+    echo "[INFO] Setting stripe_cache_size to 16 MiB for /dev/md0..."
+    echo 16384 > /sys/block/md0/md/stripe_cache_size
+    echo 8192 > /sys/block/md0/md/stripe_cache_active 
+
+    #echo "[INFO] Setting stripe_cache_size to 32 MiB for /dev/md0"
+    #echo 32768 > /sys/block/md0/md/stripe_cache_size
+    #echo 8192 > /sys/block/md0/md/stripe_cache_active 
+}
+
+notify() {
+    curl \
+        -H "Priority: $1" \
+        -H "Title: $2" \
+        -d "$3" \
+        "$4" 
+}
+
+if [ -n "$*" ]; then
+    if [[ "$*" == *"-t"* ]]; then
+        getMessage "$(</dev/stdin)" true
+    else
+        getMessage "$*" false
+    fi
+else
+    proc=$$
+    trap 'exit 1' SIGUSR1
+
+    checkDependencies
+
+    while true; do
+    menu=$(dialog --clear \
+            --title "MD Raid Helper" \
+            --menu "Select one of the following actions:" \
+            0 0 0  \
+            1 "Assemble array" \
+            2 "Start check" \
+            3 "Pause check" \
+            4 "Stop check" \
+            5 "Fix journal (/dev/sda)" \
+            6 "Optimize performance (check, rebuild and resync)" \
+            7 "Exit" \
+            2>&1 >"$(tty)")
+
+    clear
+
+    case $menu in
+        1)
+            openIntegrity
+            mdAssemble
+            openLUKS
+            mountFilesystems
+            startContainers
+            exit
+            ;;
+        2)
+            mdCheckStart
+            ;;
+        3)
+            mdCheckPause
+            ;;
+        4)  
+            mdCheckStop
+            exit
+            ;;
+        5)
+            mdJournalFix
+            exit
+            ;;
+        6)
+            mdPerformance
+            exit
+            ;;
+        7)
+            exit
+            ;;
+        *)
+            exit
+            ;;
+    esac
+done
+fi
