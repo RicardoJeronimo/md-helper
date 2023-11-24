@@ -133,6 +133,7 @@ mdJournalFix() {
     mdadm --manage /dev/md0 --add-journal /dev/sda 
 
     openLUKS
+    repairXFS
     mountFilesystems
     startContainers
 }
@@ -175,6 +176,11 @@ notify() {
         -H "Title: $2" \
         -d "$3" \
         "$4" 
+}
+
+repairXFS() {
+    xfs_repair /dev/mapper/mdpool0-apollo
+    xfs_repair /dev/mapper/mdpool0-ldap
 }
 
 if [ -n "$*" ]; then
