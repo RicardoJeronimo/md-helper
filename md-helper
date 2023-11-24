@@ -57,13 +57,13 @@ getMessage() {
 openIntegrity() {
     echo "[INFO] Opening integrity..."
     integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:0 isda \
-        && echo "[INFO] /dev/isda is up." || echo "[ERROR] /dev/isda is already up or something went wrong."
+        && echo "[INFO] /dev/mapper/isda is up." || echo "[ERROR] /dev/mapper/isda is already up or something went wrong."
     integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:1 isdb \
-        && echo "[INFO] /dev/isdb is up." || echo "[ERROR] /dev/isdb is already up or something went wrong."
+        && echo "[INFO] /dev/mapper/isdb is up." || echo "[ERROR] /dev/mapper/isdb is already up or something went wrong."
     integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:2 isdc \
-        && echo "[INFO] /dev/isdc is up." || echo "[ERROR] /dev/isdc is already up or something went wrong."
+        && echo "[INFO] /dev/mapper/isdc is up." || echo "[ERROR] /dev/mapper/isdc is already up or something went wrong."
     integritysetup open --integrity sha256 /dev/disk/by-id/usb-ST2000DM_008-2UB102_152D00539000-0:3 isdd \
-        && echo "[INFO] /dev/isdd is up." || echo "[ERROR] /dev/isdd is already up or something went wrong."
+        && echo "[INFO] /dev/mapper/isdd is up." || echo "[ERROR] /dev/mapper/isdd is already up or something went wrong."
 }
 
 mdAssemble() {
@@ -75,7 +75,7 @@ mdAssemble() {
 
 mdAssembleReadOnly() {
     echo "[INFO] Assembling array /dev/md0 as read-only..."
-    mdadm --assemble --readonly /dev/md0 --uuid=7ccf7a73:8be7e9a2:e7b87761:52f55e50 \
+    mdadm --verbose --assemble --readonly --force /dev/md0 /dev/mapper/isda /dev/mapper/isdb /dev/mapper/isdc /dev/mapper/isdd \
         && mdadm --misc -D /dev/md0 || echo "[ERROR] Something went wrong with /dev/md0."
     echo
  }
