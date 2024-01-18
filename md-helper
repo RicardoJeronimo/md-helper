@@ -133,6 +133,7 @@ mdJournalFix() {
     mdadm --manage /dev/md0 --add-journal /dev/sda 
 
     openLUKS
+    sleep 5
     repairXFS
     mountFilesystems
     startContainers
