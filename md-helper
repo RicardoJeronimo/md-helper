@@ -87,7 +87,7 @@ openLUKS() {
     echo
 }
 
-mountFilesystems(){
+mountFilesystems() {
     echo "[INFO] Mounting filesystems..."
     sleep 1
     mount -a \
@@ -95,9 +95,15 @@ mountFilesystems(){
     echo
 }
 
-startContainers(){
+startContainers() {
     echo "[INFO] Starting containers..."
     docker start radarr sonarr readarr prowlarr bazarr qbittorrent jellyfin
+    echo
+}
+
+startServices() {
+    echo "[INFOR] Starting services..."
+    systemctl start nfs-server smbd
     echo
 }
 
@@ -137,6 +143,7 @@ mdJournalFix() {
     repairXFS
     mountFilesystems
     startContainers
+    startServices
 }
 
 mdPerformance() {
@@ -219,6 +226,7 @@ else
             openLUKS
             mountFilesystems
             startContainers
+            startServices
             exit
             ;;
         2)
