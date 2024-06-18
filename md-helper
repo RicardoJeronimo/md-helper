@@ -97,7 +97,7 @@ mountFilesystems() {
 
 startContainers() {
     echo "[INFO] Starting containers..."
-    docker start radarr sonarr readarr lidarr prowlarr bazarr qbittorrent jellyfin
+    docker start radarr sonarr readarr lidarr prowlarr bazarr qbittorrent jellyfin flaresolverr duplicacy
     echo
 }
 
